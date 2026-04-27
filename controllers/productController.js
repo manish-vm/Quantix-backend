@@ -1,11 +1,37 @@
 const Product = require('../models/Product');
+const DemoData = require('../models/DemoData');
 const { parseExcel } = require('../utils/excelParser');
 const fs = require('fs');
 
 exports.getAllProducts = async (req, res) => {
   try {
-    const products = await Product.find().sort({ createdAt: -1 });
-    res.json(products);
+    const { page, limit } = req.query;
+
+    // If no pagination params, return all products for backward compatibility
+    if (!page && !limit) {
+      const products = await Product.find().sort({ createdAt: -1 });
+      return res.json(products);
+    }
+
+    // Parse pagination params with defaults
+    const pageNum = parseInt(page) || 1;
+    const limitNum = parseInt(limit) || 10;
+    const skip = (pageNum - 1) * limitNum;
+
+    // Get paginated products and total count
+    const [products, totalCount] = await Promise.all([
+      Product.find().sort({ createdAt: -1 }).skip(skip).limit(limitNum),
+      Product.countDocuments()
+    ]);
+
+    const totalPages = Math.ceil(totalCount / limitNum);
+
+    res.json({
+      products,
+      totalCount,
+      totalPages,
+      currentPage: pageNum
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -38,6 +64,12 @@ exports.updateProduct = async (req, res) => {
       return res.status(404).json({ message: 'Product not found' });
     }
 
+    // Update associated demo data description
+    await DemoData.updateMany(
+      { partNo: product.partNo },
+      { partDescription: description }
+    );
+
     res.json(product);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -47,8 +79,16 @@ exports.updateProduct = async (req, res) => {
 exports.deleteProduct = async (req, res) => {
   try {
     const { id } = req.params;
-    await Product.findByIdAndDelete(id);
-    res.json({ message: 'Product deleted successfully' });
+    const product = await Product.findByIdAndDelete(id);
+
+    if (!product) {
+      return res.status(404).json({ message: 'Product not found' });
+    }
+
+    // Delete associated demo data
+    await DemoData.deleteMany({ partNo: product.partNo });
+
+    res.json({ message: 'Product deleted successfully', deletedProduct: product });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
