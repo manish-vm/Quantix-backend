@@ -67,7 +67,7 @@ exports.getScanLogs = async (req, res) => {
     const { partNo, dateFrom, dateTo, scannedBy } = req.query;
     const filter = {};
 
-    if (partNo) filter.partNo = partNo.toUpperCase();
+    if (partNo) filter.partNo = { $regex: partNo, $options: 'i' };
     if (scannedBy) filter.scannedBy = scannedBy;
     if (dateFrom || dateTo) {
       filter.createdAt = {};

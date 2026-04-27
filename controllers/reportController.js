@@ -15,13 +15,88 @@ exports.getDashboardStats = async (req, res) => {
       .sort({ createdAt: -1 })
       .limit(10);
 
+    // Chart data: scans by date (last 7 days)
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
+    sevenDaysAgo.setHours(0, 0, 0, 0);
+
+    const scansByDate = await ScanLog.aggregate([
+      { $match: { createdAt: { $gte: sevenDaysAgo } } },
+      {
+        $group: {
+          _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
+          count: { $sum: 1 },
+          matchCount: { $sum: { $cond: [{ $eq: ['$status', 'match'] }, 1, 0] } },
+          mismatchCount: { $sum: { $cond: [{ $eq: ['$status', 'mismatch'] }, 1, 0] } }
+        }
+      },
+      { $sort: { _id: 1 } }
+    ]);
+
+    // Fill missing dates
+    const dateMap = {};
+    for (let i = 0; i < 7; i++) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const key = d.toISOString().split('T')[0];
+      dateMap[key] = { date: key, count: 0, matchCount: 0, mismatchCount: 0 };
+    }
+    scansByDate.forEach(item => {
+      if (dateMap[item._id]) {
+        dateMap[item._id] = {
+          date: item._id,
+          count: item.count,
+          matchCount: item.matchCount,
+          mismatchCount: item.mismatchCount
+        };
+      }
+    });
+    const scansByDateChart = Object.values(dateMap).reverse();
+
+    // Chart data: top 5 scanned products
+    const topProducts = await ScanLog.aggregate([
+      {
+        $group: {
+          _id: '$partNo',
+          count: { $sum: 1 }
+        }
+      },
+      { $sort: { count: -1 } },
+      { $limit: 5 }
+    ]);
+
+    // Chart data: scans by hour today
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const scansByHour = await ScanLog.aggregate([
+      { $match: { createdAt: { $gte: today } } },
+      {
+        $group: {
+          _id: { $hour: '$createdAt' },
+          count: { $sum: 1 }
+        }
+      },
+      { $sort: { _id: 1 } }
+    ]);
+    const hourMap = {};
+    for (let i = 0; i < 24; i++) {
+      hourMap[i] = { hour: `${i}:00`, count: 0 };
+    }
+    scansByHour.forEach(item => {
+      hourMap[item._id] = { hour: `${item._id}:00`, count: item.count };
+    });
+    const scansByHourChart = Object.values(hourMap);
+
     res.json({
       totalProducts,
       totalDemoData,
       totalScans,
       matchScans,
       mismatchScans,
-      recentScans
+      recentScans,
+      scansByDateChart,
+      topProducts,
+      scansByHourChart
     });
   } catch (error) {
     res.status(500).json({ message: error.message });

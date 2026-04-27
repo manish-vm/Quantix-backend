@@ -5,11 +5,20 @@ const fs = require('fs');
 
 exports.getAllProducts = async (req, res) => {
   try {
-    const { page, limit } = req.query;
+    const { page, limit, partNo, description } = req.query;
+
+    // Build filter object
+    const filter = {};
+    if (partNo) {
+      filter.partNo = { $regex: partNo, $options: 'i' };
+    }
+    if (description) {
+      filter.description = { $regex: description, $options: 'i' };
+    }
 
     // If no pagination params, return all products for backward compatibility
     if (!page && !limit) {
-      const products = await Product.find().sort({ createdAt: -1 });
+      const products = await Product.find(filter).sort({ createdAt: -1 });
       return res.json(products);
     }
 
@@ -20,8 +29,8 @@ exports.getAllProducts = async (req, res) => {
 
     // Get paginated products and total count
     const [products, totalCount] = await Promise.all([
-      Product.find().sort({ createdAt: -1 }).skip(skip).limit(limitNum),
-      Product.countDocuments()
+      Product.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limitNum),
+      Product.countDocuments(filter)
     ]);
 
     const totalPages = Math.ceil(totalCount / limitNum);
