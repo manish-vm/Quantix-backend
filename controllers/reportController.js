@@ -110,16 +110,62 @@ exports.getProductReport = async (req, res) => {
 
     for (const product of products) {
       const demo = await DemoData.findOne({ partNo: product.partNo }).lean();
-      const scanCount = await ScanLog.countDocuments({ partNo: product.partNo });
+
+      // Aggregate scan data for this product
+      const scanAggregation = await ScanLog.aggregate([
+        { $match: { partNo: product.partNo } },
+        {
+          $group: {
+            _id: '$partNo',
+            receivedWeight: { $sum: '$measuredWeight' },
+            totalScans: { $sum: 1 }
+          }
+        }
+      ]);
+
+      const scanData = scanAggregation.length > 0 ? scanAggregation[0] : { receivedWeight: 0, totalScans: 0 };
+      const unitWeight = demo ? demo.unitWeight : null;
+      const overallWeight = demo ? demo.overallWeight : null;
+      const totalCount = demo ? demo.totalCount : null;
+      const receivedWeight = scanData.receivedWeight;
+      const totalScans = scanData.totalScans;
+
+      // Calculate derived fields
+      let underweight = null;
+      let overweight = null;
+      let basedOnReceivedWeightProductCount = null;
+      let productDelay = null;
+      let excessProduct = null;
+
+      if (unitWeight !== null && overallWeight !== null && totalCount !== null) {
+        basedOnReceivedWeightProductCount = receivedWeight / unitWeight;
+
+        if (receivedWeight < overallWeight) {
+          underweight = overallWeight - receivedWeight;
+        } else if (receivedWeight > overallWeight) {
+          overweight = receivedWeight - overallWeight;
+        }
+
+        if (basedOnReceivedWeightProductCount < totalCount) {
+          productDelay = totalCount - basedOnReceivedWeightProductCount;
+        } else if (basedOnReceivedWeightProductCount > totalCount) {
+          excessProduct = basedOnReceivedWeightProductCount - totalCount;
+        }
+      }
 
       report.push({
         partNo: product.partNo,
         description: product.description,
-        unitWeight: demo ? demo.unitWeight : null,
-        overallWeight: demo ? demo.overallWeight : null,
-        totalCount: demo ? demo.totalCount : null,
-        remainingCount: demo ? demo.remainingCount : null,
-        totalScans: scanCount
+        unitWeight: unitWeight,
+        overallWeight: overallWeight,
+        receivedWeight: receivedWeight,
+        underweight: underweight,
+        overweight: overweight,
+        totalIdealProductCount: totalCount,
+        basedOnReceivedWeightProductCount: basedOnReceivedWeightProductCount,
+        productDelay: productDelay,
+        excessProduct: excessProduct,
+        totalScans: totalScans
       });
     }
 
