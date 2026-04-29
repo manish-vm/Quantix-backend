@@ -165,6 +165,7 @@ exports.getProductReport = async (req, res) => {
         basedOnReceivedWeightProductCount: basedOnReceivedWeightProductCount,
         productDelay: productDelay,
         excessProduct: excessProduct,
+        remainingCount: demo ? demo.remainingCount : null,
         totalScans: totalScans
       });
     }

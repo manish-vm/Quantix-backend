@@ -64,22 +64,100 @@ exports.performScan = async (req, res) => {
 
 exports.getScanLogs = async (req, res) => {
   try {
-    const { partNo, dateFrom, dateTo, scannedBy } = req.query;
-    const filter = {};
+    const { partNo, dateFrom, dateTo } = req.query;
+    let filter = {};
 
-    if (partNo) filter.partNo = { $regex: partNo, $options: 'i' };
-    if (scannedBy) filter.scannedBy = scannedBy;
+    if (partNo) filter.partNo = new RegExp(partNo, 'i');
     if (dateFrom || dateTo) {
       filter.createdAt = {};
       if (dateFrom) filter.createdAt.$gte = new Date(dateFrom);
-      if (dateTo) filter.createdAt.$lte = new Date(dateTo);
+      if (dateTo) filter.createdAt.$lte = new Date(dateTo + 'T23:59:59.999Z');
     }
 
-    const logs = await ScanLog.find(filter)
-      .populate('scannedBy', 'name')
-      .sort({ createdAt: -1 });
+    // Get unique partNos from filtered scans
+    const partNos = await ScanLog.distinct('partNo', filter);
 
-    res.json(logs);
+    const results = [];
+    for (const p of partNos) {
+      const pFilter = { ...filter, partNo: p };
+
+      // Aggregate summary for this partNo
+      const summary = await ScanLog.aggregate([
+        { $match: pFilter },
+        {
+          $group: {
+            _id: '$partNo',
+            receivedWeight: { $sum: '$measuredWeight' },
+            totalScans: { $sum: 1 }
+          }
+        }
+      ]);
+      if (summary.length === 0) continue;
+      const agg = summary[0];
+
+      // Latest scan
+      const latest = await ScanLog.findOne(pFilter)
+        .populate('scannedBy', 'name')
+        .sort({ createdAt: -1 });
+
+      if (!latest) continue;
+
+      // DemoData and Product
+      const demo = await DemoData.findOne({ partNo: p });
+      const prod = await Product.findOne({ partNo: p });
+
+      // Compute derived fields (same as reportController)
+      const unitWeight = demo ? demo.unitWeight : null;
+      const overallWeight = demo ? demo.overallWeight : null;
+      const totalIdealProductCount = demo ? demo.totalCount : null;
+      const basedOnReceivedWeightProductCount = unitWeight ? agg.receivedWeight / unitWeight : null;
+
+      let underweight = null;
+      let overweight = null;
+      let productDelay = null;
+      let excessProduct = null;
+
+      if (overallWeight !== null && agg.receivedWeight !== null) {
+        if (agg.receivedWeight < overallWeight) {
+          underweight = overallWeight - agg.receivedWeight;
+        } else if (agg.receivedWeight > overallWeight) {
+          overweight = agg.receivedWeight - overallWeight;
+        }
+      }
+
+      if (totalIdealProductCount !== null && basedOnReceivedWeightProductCount !== null) {
+        if (basedOnReceivedWeightProductCount < totalIdealProductCount) {
+          productDelay = totalIdealProductCount - basedOnReceivedWeightProductCount;
+        } else if (basedOnReceivedWeightProductCount > totalIdealProductCount) {
+          excessProduct = basedOnReceivedWeightProductCount - totalIdealProductCount;
+        }
+      }
+
+      results.push({
+        partNo: p,
+        description: prod ? prod.description : latest.partDescription,
+        unitWeight,
+        overallWeight,
+        receivedWeight: agg.receivedWeight,
+        underweight,
+        overweight,
+        totalIdealProductCount,
+        basedOnReceivedWeightProductCount,
+        productDelay,
+        excessProduct,
+        // From latest scan
+        measuredWeight: latest.measuredWeight,
+        expectedWeight: latest.expectedWeight,
+        status: latest.status,
+        scannedByName: latest.scannedByName || (latest.scannedBy ? latest.scannedBy.name : null),
+        createdAt: latest.createdAt
+      });
+    }
+
+    // Sort by latest createdAt desc
+    results.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+    res.json(results);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
