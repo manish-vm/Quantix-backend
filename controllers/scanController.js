@@ -163,6 +163,20 @@ exports.getScanLogs = async (req, res) => {
   }
 };
 
+exports.getUserRecentScanLogs = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const logs = await ScanLog.find({ scannedBy: userId })
+      .sort({ createdAt: -1 })
+      .limit(10)
+      .lean();
+
+    res.json(logs);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 exports.getUserScanSummary = async (req, res) => {
   try {
     const userId = req.user.userId;
