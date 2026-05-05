@@ -163,3 +163,45 @@ exports.getScanLogs = async (req, res) => {
   }
 };
 
+exports.getUserScanSummary = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+
+    // Aggregate total weight and total products scanned
+    const summary = await ScanLog.aggregate([
+      { $match: { scannedBy: userId } },
+      {
+        $group: {
+          _id: null,
+          totalWeightScanned: { $sum: '$measuredWeight' },
+          totalProductsScanned: { $sum: '$expectedCount' },
+          totalScans: { $sum: 1 }
+        }
+      }
+    ]);
+
+    const agg = summary[0] || { totalWeightScanned: 0, totalProductsScanned: 0, totalScans: 0 };
+
+    // For remaining products, sum all remainingCount from DemoData
+    const totalRemaining = await DemoData.aggregate([
+      {
+        $group: {
+          _id: null,
+          totalRemaining: { $sum: '$remainingCount' }
+        }
+      }
+    ]);
+
+    const totalRemainingProducts = totalRemaining[0]?.totalRemaining || 0;
+
+    res.json({
+      totalWeightScanned: agg.totalWeightScanned,
+      totalProductsScanned: agg.totalProductsScanned,
+      totalScans: agg.totalScans,
+      totalRemainingProducts
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+

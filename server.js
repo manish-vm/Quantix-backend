@@ -1,6 +1,7 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const path = require('path');
 const dotenv = require('dotenv');
 
 const authRoutes = require('./routes/auth');
@@ -9,7 +10,7 @@ const demoDataRoutes = require('./routes/demoData');
 const scanRoutes = require('./routes/scan');
 const reportRoutes = require('./routes/reports');
 
-dotenv.config();
+dotenv.config({ path: path.join(__dirname, '.env') });
 
 const app = express();
 
@@ -19,7 +20,14 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // MongoDB Connection
-mongoose.connect(process.env.MONGODB_URI, {
+const mongoUri = process.env.MONGODB_URI?.trim();
+if (!mongoUri) {
+  console.error('MongoDB Connection Error: MONGODB_URI is not defined.');
+  console.error('Make sure backend/.env exists and contains MONGODB_URI, or set the environment variable before starting the server.');
+  process.exit(1);
+}
+
+mongoose.connect(mongoUri, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
 })
