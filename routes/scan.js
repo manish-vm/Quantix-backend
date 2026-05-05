@@ -7,6 +7,7 @@ router.post('/', verifyToken, scanController.performScan);
 router.get('/logs', verifyToken, scanController.getScanLogs);
 router.get('/summary', verifyToken, scanController.getUserScanSummary);
 router.get('/recent', verifyToken, scanController.getUserRecentScanLogs);
+router.get('/history', verifyToken, scanController.getScanHistory);
 
 module.exports = router;
 

@@ -178,6 +178,25 @@ exports.getUserRecentScanLogs = async (req, res) => {
   }
 };
 
+exports.getScanHistory = async (req, res) => {
+  try {
+    const { partNo } = req.query;
+    if (!partNo) {
+      return res.status(400).json({ message: 'partNo query parameter is required' });
+    }
+
+    const upperPartNo = partNo.toUpperCase();
+    const logs = await ScanLog.find({ partNo: upperPartNo })
+      .populate('scannedBy', 'name')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    res.json(logs);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 exports.getUserScanSummary = async (req, res) => {
   try {
     const userId = req.user.userId;
