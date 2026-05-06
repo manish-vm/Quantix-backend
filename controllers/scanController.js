@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { ObjectId } = mongoose;
 const DemoData = require('../models/DemoData');
 const ScanLog = require('../models/ScanLog');
 const Product = require('../models/Product');
@@ -202,7 +203,7 @@ exports.getUserScanSummary = async (req, res) => {
     const userId = req.user.userId;
 
     // Aggregate total weight and total products scanned
-    const userObjectId = mongoose.Types.ObjectId(userId);
+    const userObjectId = new ObjectId(userId);
     const summary = await ScanLog.aggregate([
       { $match: { scannedBy: userObjectId } },
       {
