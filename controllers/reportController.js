@@ -118,13 +118,15 @@ exports.getProductReport = async (req, res) => {
           $group: {
             _id: '$partNo',
             receivedWeight: { $sum: '$measuredWeight' },
+            validatedProductCount: { $sum: '$expectedCount' },
             totalScans: { $sum: 1 }
           }
         }
       ]);
 
-      const scanData = scanAggregation.length > 0 ? scanAggregation[0] : { receivedWeight: 0, totalScans: 0 };
+      const scanData = scanAggregation.length > 0 ? scanAggregation[0] : { receivedWeight: 0, validatedProductCount: 0, totalScans: 0 };
       const unitWeight = demo ? demo.unitWeight : null;
+      const toleranceWeight = demo ? (demo.toleranceWeight ?? 0) : null;
       const overallWeight = demo ? demo.overallWeight : null;
       const totalCount = demo ? demo.totalCount : null;
       const receivedWeight = scanData.receivedWeight;
@@ -138,7 +140,7 @@ exports.getProductReport = async (req, res) => {
       let excessProduct = null;
 
       if (unitWeight !== null && overallWeight !== null && totalCount !== null) {
-        basedOnReceivedWeightProductCount = receivedWeight / unitWeight;
+        basedOnReceivedWeightProductCount = scanData.validatedProductCount;
 
         if (receivedWeight < overallWeight) {
           underweight = overallWeight - receivedWeight;
@@ -157,6 +159,7 @@ exports.getProductReport = async (req, res) => {
         partNo: product.partNo,
         description: product.description,
         unitWeight: unitWeight,
+        toleranceWeight: toleranceWeight,
         overallWeight: overallWeight,
         receivedWeight: receivedWeight,
         underweight: underweight,

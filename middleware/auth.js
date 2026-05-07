@@ -18,10 +18,16 @@ const verifyToken = (req, res, next) => {
   }
 };
 
-const requireRole = (role) => {
+const requireRole = (roles) => {
   return (req, res, next) => {
-    if (req.user.role !== role) {
-      return res.status(403).json({ message: `Access denied. ${role} role required.` });
+    if (Array.isArray(roles)) {
+      if (!roles.includes(req.user.role)) {
+        return res.status(403).json({ message: `Access denied. One of ${roles.join(', ')} roles required.` });
+      }
+    } else {
+      if (req.user.role !== roles) {
+        return res.status(403).json({ message: `Access denied. ${roles} role required.` });
+      }
     }
     next();
   };

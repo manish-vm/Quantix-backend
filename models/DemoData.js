@@ -27,6 +27,12 @@ const demoDataSchema = new mongoose.Schema({
     required: true,
     min: 0
   },
+  toleranceWeight: {
+    type: Number,
+    required: true,
+    min: 0,
+    default: 0
+  },
   remainingCount: {
     type: Number,
     required: true,

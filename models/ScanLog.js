@@ -23,6 +23,11 @@ const scanLogSchema = new mongoose.Schema({
     type: Number,
     required: true
   },
+  toleranceWeight: {
+    type: Number,
+    required: true,
+    default: 0
+  },
   expectedCount: {
     type: Number,
     required: true

@@ -3,18 +3,35 @@ const Product = require('../models/Product');
 
 exports.createDemoData = async (req, res) => {
   try {
-    const { partNo, overallWeight, totalCount } = req.body;
+    const { partNo, partDescription, totalCount } = req.body;
+    const parsedUnitWeight = Number(req.body.unitWeight ?? req.body.overallWeight);
+    const parsedTotalCount = Number(totalCount);
+    const parsedToleranceWeight = Number(req.body.toleranceWeight ?? 0);
 
-    const product = await Product.findOne({ partNo: partNo.toUpperCase() });
+    let product = await Product.findOne({ partNo: partNo.toUpperCase() });
     if (!product) {
-      return res.status(404).json({ message: 'Part No not found in product master' });
+      // Create product if not exists
+      product = new Product({
+        partNo: partNo.toUpperCase(),
+        description: partDescription || 'Unknown',
+        createdBy: req.user.userId
+      });
+      await product.save();
     }
 
-    if (totalCount <= 0) {
+    if (!Number.isFinite(parsedUnitWeight) || parsedUnitWeight <= 0) {
+      return res.status(400).json({ message: 'Unit weight must be greater than 0' });
+    }
+
+    if (!Number.isFinite(parsedTotalCount) || parsedTotalCount <= 0) {
       return res.status(400).json({ message: 'Total count must be greater than 0' });
     }
 
-    const unitWeight = overallWeight / totalCount;
+    if (!Number.isFinite(parsedToleranceWeight) || parsedToleranceWeight < 0) {
+      return res.status(400).json({ message: 'Tolerance weight must be 0 or greater' });
+    }
+
+    const overallWeight = parsedUnitWeight * parsedTotalCount;
 
     const demoData = await DemoData.findOneAndUpdate(
       { partNo: partNo.toUpperCase() },
@@ -22,9 +39,10 @@ exports.createDemoData = async (req, res) => {
         partNo: partNo.toUpperCase(),
         partDescription: product.description,
         overallWeight,
-        totalCount,
-        unitWeight,
-        remainingCount: totalCount,
+        totalCount: parsedTotalCount,
+        unitWeight: parsedUnitWeight,
+        toleranceWeight: parsedToleranceWeight,
+        remainingCount: parsedTotalCount,
         createdBy: req.user.userId
       },
       { upsert: true, new: true }
@@ -42,7 +60,10 @@ exports.getDemoData = async (req, res) => {
     const demoData = await DemoData.findOne({ partNo: partNo.toUpperCase() });
 
     if (!demoData) {
-      return res.status(404).json({ message: 'Demo data not found. Please create baseline first.' });
+      return res.status(404).json({
+        message: 'Demo data not found. Please create baseline first.',
+        requiresDemoData: true
+      });
     }
 
     res.json(demoData);

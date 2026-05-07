@@ -26,14 +26,16 @@ exports.performScan = async (req, res) => {
       return res.status(400).json({ message: 'All items have been scanned. Count is zero.' });
     }
 
-    const expectedCount = measuredWeight / demoData.unitWeight;
-    const expectedWeight = demoData.unitWeight * Math.round(expectedCount);
-    const tolerance = demoData.unitWeight * 0.005;
+    const expectedWeight = demoData.unitWeight;
+    const tolerance = demoData.toleranceWeight ?? 0;
     const diff = Math.abs(measuredWeight - expectedWeight);
     const status = diff <= tolerance ? 'match' : 'mismatch';
+    const countedProductCount = status === 'match' ? 1 : 0;
 
-    demoData.remainingCount = Math.max(0, demoData.remainingCount - Math.round(expectedCount));
-    await demoData.save();
+    if (status === 'match') {
+      demoData.remainingCount = Math.max(0, demoData.remainingCount - 1);
+      await demoData.save();
+    }
 
     const scanLog = new ScanLog({
       partNo: upperPartNo,
@@ -41,7 +43,8 @@ exports.performScan = async (req, res) => {
       measuredWeight,
       expectedWeight,
       unitWeight: demoData.unitWeight,
-      expectedCount: Math.round(expectedCount),
+      toleranceWeight: tolerance,
+      expectedCount: countedProductCount,
       status,
       scannedBy: req.user.userId,
       scannedByName: req.user.name
@@ -55,7 +58,8 @@ exports.performScan = async (req, res) => {
       measuredWeight,
       expectedWeight,
       unitWeight: demoData.unitWeight,
-      expectedCount: Math.round(expectedCount),
+      toleranceWeight: tolerance,
+      expectedCount: countedProductCount,
       remainingCount: demoData.remainingCount,
       message: status === 'match' ? 'Weight matches expected value' : 'Weight mismatch detected'
     });
@@ -76,94 +80,79 @@ exports.getScanLogs = async (req, res) => {
       if (dateTo) filter.createdAt.$lte = new Date(dateTo + 'T23:59:59.999Z');
     }
 
-    // Get unique partNos from filtered scans
-    const partNos = await ScanLog.distinct('partNo', filter);
+    // Return *every* scan log (per scan), including employee name.
+    // This is required for Admin Scan Logs to show all scans by all employees.
+    const scanLogs = await ScanLog.find(filter)
+      .populate('scannedBy', 'name')
+      .sort({ createdAt: -1 })
+      .lean();
 
-    const results = [];
-    for (const p of partNos) {
-      const pFilter = { ...filter, partNo: p };
+    const enriched = await Promise.all(
+      scanLogs.map(async (log) => {
+        const demo = await DemoData.findOne({ partNo: log.partNo }).lean();
+        const prod = await Product.findOne({ partNo: log.partNo }).lean();
 
-      // Aggregate summary for this partNo
-      const summary = await ScanLog.aggregate([
-        { $match: pFilter },
-        {
-          $group: {
-            _id: '$partNo',
-            receivedWeight: { $sum: '$measuredWeight' },
-            totalScans: { $sum: 1 }
+        const unitWeight = demo ? demo.unitWeight : log.unitWeight ?? null;
+        const toleranceWeight = demo ? (demo.toleranceWeight ?? 0) : log.toleranceWeight ?? null;
+        const overallWeight = demo ? demo.overallWeight : null;
+        const totalIdealProductCount = demo ? demo.totalCount : null;
+
+        // Keep derived fields on a per-scan basis when possible.
+        const receivedWeight = log.measuredWeight ?? null;
+        const basedOnReceivedWeightProductCount = log.expectedCount ?? null;
+
+        let underweight = null;
+        let overweight = null;
+        let productDelay = null;
+        let excessProduct = null;
+
+        if (overallWeight !== null && receivedWeight !== null) {
+          if (receivedWeight < overallWeight) underweight = overallWeight - receivedWeight;
+          else if (receivedWeight > overallWeight) overweight = receivedWeight - overallWeight;
+        }
+
+        if (totalIdealProductCount !== null && basedOnReceivedWeightProductCount !== null) {
+          if (basedOnReceivedWeightProductCount < totalIdealProductCount) {
+            productDelay = totalIdealProductCount - basedOnReceivedWeightProductCount;
+          } else if (basedOnReceivedWeightProductCount > totalIdealProductCount) {
+            excessProduct = basedOnReceivedWeightProductCount - totalIdealProductCount;
           }
         }
-      ]);
-      if (summary.length === 0) continue;
-      const agg = summary[0];
 
-      // Latest scan
-      const latest = await ScanLog.findOne(pFilter)
-        .populate('scannedBy', 'name')
-        .sort({ createdAt: -1 });
+        const description = prod ? prod.description : log.partDescription;
 
-      if (!latest) continue;
+        return {
+          _id: log._id,
+          partNo: log.partNo,
+          description,
+          unitWeight,
+          toleranceWeight,
+          overallWeight,
+          receivedWeight,
+          underweight,
+          overweight,
+          totalIdealProductCount,
+          basedOnReceivedWeightProductCount,
+          productDelay,
+          excessProduct,
 
-      // DemoData and Product
-      const demo = await DemoData.findOne({ partNo: p });
-      const prod = await Product.findOne({ partNo: p });
+          // Single-scan fields used by UI
+          measuredWeight: log.measuredWeight,
+          expectedWeight: log.expectedWeight,
+          status: log.status,
+          scannedByName:
+            log.scannedByName || (log.scannedBy ? log.scannedBy.name : null),
+          createdAt: log.createdAt
+        };
+      })
+    );
 
-      // Compute derived fields (same as reportController)
-      const unitWeight = demo ? demo.unitWeight : null;
-      const overallWeight = demo ? demo.overallWeight : null;
-      const totalIdealProductCount = demo ? demo.totalCount : null;
-      const basedOnReceivedWeightProductCount = unitWeight ? agg.receivedWeight / unitWeight : null;
-
-      let underweight = null;
-      let overweight = null;
-      let productDelay = null;
-      let excessProduct = null;
-
-      if (overallWeight !== null && agg.receivedWeight !== null) {
-        if (agg.receivedWeight < overallWeight) {
-          underweight = overallWeight - agg.receivedWeight;
-        } else if (agg.receivedWeight > overallWeight) {
-          overweight = agg.receivedWeight - overallWeight;
-        }
-      }
-
-      if (totalIdealProductCount !== null && basedOnReceivedWeightProductCount !== null) {
-        if (basedOnReceivedWeightProductCount < totalIdealProductCount) {
-          productDelay = totalIdealProductCount - basedOnReceivedWeightProductCount;
-        } else if (basedOnReceivedWeightProductCount > totalIdealProductCount) {
-          excessProduct = basedOnReceivedWeightProductCount - totalIdealProductCount;
-        }
-      }
-
-      results.push({
-        partNo: p,
-        description: prod ? prod.description : latest.partDescription,
-        unitWeight,
-        overallWeight,
-        receivedWeight: agg.receivedWeight,
-        underweight,
-        overweight,
-        totalIdealProductCount,
-        basedOnReceivedWeightProductCount,
-        productDelay,
-        excessProduct,
-        // From latest scan
-        measuredWeight: latest.measuredWeight,
-        expectedWeight: latest.expectedWeight,
-        status: latest.status,
-        scannedByName: latest.scannedByName || (latest.scannedBy ? latest.scannedBy.name : null),
-        createdAt: latest.createdAt
-      });
-    }
-
-    // Sort by latest createdAt desc
-    results.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-
-    res.json(results);
+    res.json(enriched);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
+
 
 exports.getUserRecentScanLogs = async (req, res) => {
   try {
@@ -174,6 +163,40 @@ exports.getUserRecentScanLogs = async (req, res) => {
       .lean();
 
     res.json(logs);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+exports.getUserScanHistory = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const logs = await ScanLog.find({ scannedBy: userId })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const partNos = [...new Set(logs.map((log) => log.partNo))];
+    const demoDataEntries = await DemoData.find({ partNo: { $in: partNos } }).lean();
+    const demoMap = demoDataEntries.reduce((acc, demo) => {
+      acc[demo.partNo] = demo;
+      return acc;
+    }, {});
+
+    // Enrich logs with latest demo data so employee history reflects admin updates.
+    const enrichedLogs = logs.map((log) => {
+      const demo = demoMap[log.partNo];
+      return {
+        ...log,
+        // Used by UI column "Total ideal product count"
+        totalIdealProductCount: demo?.totalCount ?? null,
+        // Used by UI column "Tolerance Weight"
+        toleranceWeight: demo?.toleranceWeight ?? log.toleranceWeight ?? null,
+        // Also keep unitWeight in sync (optional but helps consistency)
+        unitWeight: demo?.unitWeight ?? log.unitWeight ?? null,
+      };
+    });
+
+    res.json(enrichedLogs);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

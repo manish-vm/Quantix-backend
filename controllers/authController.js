@@ -61,3 +61,48 @@ exports.getMe = async (req, res) => {
   }
 };
 
+// Employees/admin can update their own profile HR fields.
+exports.updateMe = async (req, res) => {
+  try {
+    const user = await User.findById(req.user.userId);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    const {
+      employeeId,
+      fullName,
+      department,
+      jobTitle,
+      contactDetails,
+      hireDate,
+      employmentStatus,
+      manager,
+      salary,
+      location,
+      // identity
+      name,
+      email
+    } = req.body;
+
+    if (typeof name === 'string') user.name = name;
+    if (typeof email === 'string') user.email = email;
+
+    if (typeof employeeId === 'string') user.employeeId = employeeId;
+    if (typeof fullName === 'string') user.fullName = fullName;
+    if (typeof department === 'string') user.department = department;
+    if (typeof jobTitle === 'string') user.jobTitle = jobTitle;
+    if (typeof contactDetails === 'string') user.contactDetails = contactDetails;
+    if (hireDate !== undefined) user.hireDate = hireDate ? new Date(hireDate) : null;
+    if (typeof employmentStatus === 'string') user.employmentStatus = employmentStatus;
+    if (typeof manager === 'string') user.manager = manager;
+    if (salary !== undefined) user.salary = salary === '' || salary === null ? undefined : Number(salary);
+    if (typeof location === 'string') user.location = location;
+
+    await user.save();
+    const updated = await User.findById(user._id).select('-password');
+    res.json(updated);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+
