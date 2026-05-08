@@ -101,14 +101,14 @@ exports.getScanLogs = async (req, res) => {
         const receivedWeight = log.measuredWeight ?? null;
         const basedOnReceivedWeightProductCount = log.expectedCount ?? null;
 
-        let underweight = null;
-        let overweight = null;
+        let short = null;
+        let excess = null;
         let productDelay = null;
         let excessProduct = null;
 
         if (overallWeight !== null && receivedWeight !== null) {
-          if (receivedWeight < overallWeight) underweight = overallWeight - receivedWeight;
-          else if (receivedWeight > overallWeight) overweight = receivedWeight - overallWeight;
+          if (receivedWeight < overallWeight) short = overallWeight - receivedWeight;
+          else if (receivedWeight > overallWeight) excess = receivedWeight - overallWeight;
         }
 
         if (totalIdealProductCount !== null && basedOnReceivedWeightProductCount !== null) {
@@ -129,8 +129,9 @@ exports.getScanLogs = async (req, res) => {
           toleranceWeight,
           overallWeight,
           receivedWeight,
-          underweight,
-          overweight,
+          
+          short,
+          excess,
           totalIdealProductCount,
           basedOnReceivedWeightProductCount,
           productDelay,

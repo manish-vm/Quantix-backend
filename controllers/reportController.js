@@ -133,8 +133,8 @@ exports.getProductReport = async (req, res) => {
       const totalScans = scanData.totalScans;
 
       // Calculate derived fields
-      let underweight = null;
-      let overweight = null;
+      let short = null;
+      let excess = null;
       let basedOnReceivedWeightProductCount = null;
       let productDelay = null;
       let excessProduct = null;
@@ -143,9 +143,9 @@ exports.getProductReport = async (req, res) => {
         basedOnReceivedWeightProductCount = scanData.validatedProductCount;
 
         if (receivedWeight < overallWeight) {
-          underweight = overallWeight - receivedWeight;
+          short = overallWeight - receivedWeight;
         } else if (receivedWeight > overallWeight) {
-          overweight = receivedWeight - overallWeight;
+          excess = receivedWeight - overallWeight;
         }
 
         if (basedOnReceivedWeightProductCount < totalCount) {
@@ -162,8 +162,8 @@ exports.getProductReport = async (req, res) => {
         toleranceWeight: toleranceWeight,
         overallWeight: overallWeight,
         receivedWeight: receivedWeight,
-        underweight: underweight,
-        overweight: overweight,
+        short: short,
+        excess: excess,
         totalIdealProductCount: totalCount,
         basedOnReceivedWeightProductCount: basedOnReceivedWeightProductCount,
         productDelay: productDelay,
