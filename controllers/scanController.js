@@ -22,20 +22,23 @@ exports.performScan = async (req, res) => {
       });
     }
 
-    if (demoData.remainingCount <= 0) {
-      return res.status(400).json({ message: 'All items have been scanned. Count is zero.' });
-    }
+    // if (demoData.remainingCount <= 0) {
+    //   return res.status(400).json({ message: 'All items have been scanned. Count is zero.' });
+    // }
 
-    const expectedWeight = demoData.unitWeight;
-    const tolerance = demoData.toleranceWeight ?? 0;
-    const diff = Math.abs(measuredWeight - expectedWeight);
-    const status = diff <= tolerance ? 'match' : 'mismatch';
-    const countedProductCount = status === 'match' ? 1 : 0;
+    // AFTER
+const expectedWeight = demoData.unitWeight * demoData.totalCount;
+const tolerance = demoData.toleranceWeight ?? 0;
+const diff = Math.abs(measuredWeight - expectedWeight);
+const status = diff <= tolerance ? 'match' : 'mismatch';
 
-    if (status === 'match') {
-      demoData.remainingCount = Math.max(0, demoData.remainingCount - 1);
-      await demoData.save();
-    }
+// How many units are in this box based on measured weight
+const countedProductCount = status === 'match' ? demoData.totalCount : 0;
+
+if (status === 'match') {
+  demoData.remainingCount = Math.max(0, demoData.remainingCount - demoData.totalCount);
+  await demoData.save();
+}
 
     const scanLog = new ScanLog({
       partNo: upperPartNo,
@@ -192,6 +195,8 @@ exports.getUserScanHistory = async (req, res) => {
         totalIdealProductCount: demo?.totalCount ?? null,
         // Used by UI column "Tolerance Weight"
         toleranceWeight: demo?.toleranceWeight ?? log.toleranceWeight ?? null,
+        // Used by UI column "Overall Weight"
+        overallWeight: demo?.overallWeight ?? null,
         // Also keep unitWeight in sync (optional but helps consistency)
         unitWeight: demo?.unitWeight ?? log.unitWeight ?? null,
       };

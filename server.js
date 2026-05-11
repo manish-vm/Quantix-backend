@@ -10,6 +10,8 @@ const productRoutes = require('./routes/products');
 const demoDataRoutes = require('./routes/demoData');
 const scanRoutes = require('./routes/scan');
 const reportRoutes = require('./routes/reports');
+const employeeRoutes = require('./routes/employees');
+
 
 dotenv.config();
 
@@ -34,6 +36,8 @@ app.use('/api/products', productRoutes);
 app.use('/api/demo-data', demoDataRoutes);
 app.use('/api/scan', scanRoutes);
 app.use('/api/reports', reportRoutes);
+app.use('/api/admin/employees', employeeRoutes);
+
 
 // Health Check
 app.get('/api/health', (req, res) => {

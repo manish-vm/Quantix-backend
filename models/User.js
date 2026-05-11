@@ -24,8 +24,17 @@ const userSchema = new mongoose.Schema(
       default: 'employee',
     },
 
-    // Employee profile fields
-    employeeId: { type: String, trim: true },
+    // Vendor vs general employee
+    employeeType: {
+      type: String,
+      enum: ['vendor', 'employee'],
+      default: 'employee',
+    },
+
+    // Employee/Vendor profile fields
+    // Must be unique across both types
+    employeeId: { type: String, trim: true, unique: true },
+
     fullName: { type: String, trim: true },
     department: { type: String, trim: true },
     jobTitle: { type: String, trim: true },
