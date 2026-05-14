@@ -19,6 +19,9 @@ const scanLogSchema = new mongoose.Schema({
     type: Number,
     required: true
   },
+  referenceWeight: {
+    type: Number
+  },
   unitWeight: {
     type: Number,
     required: true
@@ -37,6 +40,12 @@ const scanLogSchema = new mongoose.Schema({
     enum: ['match', 'mismatch'],
     required: true
   },
+  finalValidationStatus: {
+    type: String,
+    enum: ['accepted', 'rejected'],
+    required: true,
+    default: 'rejected'
+  },
   scannedBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
@@ -45,6 +54,11 @@ const scanLogSchema = new mongoose.Schema({
   scannedByName: {
     type: String,
     required: true
+  },
+  scannedByEmployeeType: {
+    type: String,
+    enum: ['vendor', 'employee'],
+    default: 'employee'
   }
 }, {
   timestamps: true

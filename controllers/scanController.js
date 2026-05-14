@@ -3,11 +3,45 @@ const { ObjectId } = mongoose;
 const DemoData = require('../models/DemoData');
 const ScanLog = require('../models/ScanLog');
 const Product = require('../models/Product');
+const User = require('../models/User');
+
+const isVendorUser = (user) => {
+  if (!user) return false;
+  if (user.employeeType === 'vendor') return true;
+
+  return Boolean(
+    user.email
+    && user.employeeId
+    && !user.department
+    && !user.jobTitle
+    && !user.manager
+  );
+};
+
+const toVendorSubmission = (log) => {
+  const user = log.scannedBy || {};
+  const displayName = user.fullName || user.name || log.scannedByName || 'Unknown vendor';
+
+  return {
+    vendorId: user._id || null,
+    vendorName: displayName,
+    vendorCode: user.employeeId || '',
+    overallWeight: log.referenceWeight ?? log.measuredWeight,
+    measuredWeight: log.measuredWeight,
+    expectedWeight: log.expectedWeight,
+    expectedCount: log.expectedCount,
+    status: log.status,
+    submittedAt: log.createdAt
+  };
+};
 
 exports.performScan = async (req, res) => {
   try {
-    const { partNo, measuredWeight } = req.body;
+    const { partNo, measuredWeight, referenceWeight } = req.body;
     const upperPartNo = partNo.toUpperCase();
+    const scanningUser = await User.findById(req.user.userId)
+      .select('name employeeType email employeeId department jobTitle manager')
+      .lean();
 
     const product = await Product.findOne({ partNo: upperPartNo });
     if (!product) {
@@ -26,31 +60,38 @@ exports.performScan = async (req, res) => {
     //   return res.status(400).json({ message: 'All items have been scanned. Count is zero.' });
     // }
 
-    // AFTER
-const expectedWeight = demoData.unitWeight * demoData.totalCount;
-const tolerance = demoData.toleranceWeight ?? 0;
-const diff = Math.abs(measuredWeight - expectedWeight);
-const status = diff <= tolerance ? 'match' : 'mismatch';
+    const expectedWeight = Number.isFinite(Number(referenceWeight))
+      ? Number(referenceWeight)
+      : demoData.unitWeight * demoData.totalCount;
+    const tolerance = demoData.toleranceWeight ?? 0;
+    const isExactVendorMatch = Number.isFinite(Number(referenceWeight))
+      ? measuredWeight === expectedWeight
+      : Math.abs(measuredWeight - expectedWeight) <= tolerance;
+    const status = isExactVendorMatch ? 'match' : 'mismatch';
+    const expectedCount = status === 'match'
+      ? Math.round(expectedWeight / demoData.unitWeight)
+      : 0;
+    const finalValidationStatus = status === 'match' ? 'accepted' : 'rejected';
 
-// How many units are in this box based on measured weight
-const countedProductCount = status === 'match' ? demoData.totalCount : 0;
-
-if (status === 'match') {
-  demoData.remainingCount = Math.max(0, demoData.remainingCount - demoData.totalCount);
-  await demoData.save();
-}
+    if (status === 'match') {
+      demoData.remainingCount = Math.max(0, demoData.remainingCount - expectedCount);
+      await demoData.save();
+    }
 
     const scanLog = new ScanLog({
       partNo: upperPartNo,
       partDescription: product.description,
       measuredWeight,
       expectedWeight,
+      ...(Number.isFinite(Number(referenceWeight)) ? { referenceWeight: Number(referenceWeight) } : {}),
       unitWeight: demoData.unitWeight,
       toleranceWeight: tolerance,
-      expectedCount: countedProductCount,
+      expectedCount,
       status,
+      finalValidationStatus,
       scannedBy: req.user.userId,
-      scannedByName: req.user.name
+      scannedByName: scanningUser?.name || req.user.name,
+      scannedByEmployeeType: isVendorUser(scanningUser) ? 'vendor' : 'employee'
     });
     await scanLog.save();
 
@@ -62,8 +103,9 @@ if (status === 'match') {
       expectedWeight,
       unitWeight: demoData.unitWeight,
       toleranceWeight: tolerance,
-      expectedCount: countedProductCount,
+      expectedCount,
       remainingCount: demoData.remainingCount,
+      finalValidationStatus,
       message: status === 'match' ? 'Weight matches expected value' : 'Weight mismatch detected'
     });
   } catch (error) {
@@ -143,7 +185,9 @@ exports.getScanLogs = async (req, res) => {
           // Single-scan fields used by UI
           measuredWeight: log.measuredWeight,
           expectedWeight: log.expectedWeight,
+          referenceWeight: log.referenceWeight,
           status: log.status,
+          finalValidationStatus: log.finalValidationStatus || (log.status === 'match' ? 'accepted' : 'rejected'),
           scannedByName:
             log.scannedByName || (log.scannedBy ? log.scannedBy.name : null),
           createdAt: log.createdAt
@@ -222,6 +266,53 @@ exports.getScanHistory = async (req, res) => {
       .lean();
 
     res.json(logs);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+exports.getVendorSubmissionsForPart = async (req, res) => {
+  try {
+    const { partNo } = req.query;
+    if (!partNo) {
+      return res.status(400).json({ message: 'partNo query parameter is required' });
+    }
+
+    const upperPartNo = partNo.toUpperCase();
+    const logs = await ScanLog.find({ partNo: upperPartNo })
+      .populate('scannedBy', 'name fullName email employeeId employeeType department jobTitle manager')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const vendorLogs = logs.filter((log) => (
+      log.scannedByEmployeeType === 'vendor' || isVendorUser(log.scannedBy)
+    ));
+    const vendorMap = new Map();
+
+    vendorLogs.forEach((log) => {
+      const vendorKey = String(log.scannedBy?._id || log.scannedByName || log._id);
+      const existing = vendorMap.get(vendorKey);
+      const submission = toVendorSubmission(log);
+
+      if (!existing) {
+        vendorMap.set(vendorKey, {
+          ...submission,
+          scanCount: 1
+        });
+        return;
+      }
+
+      existing.scanCount += 1;
+
+      if (new Date(log.createdAt) > new Date(existing.submittedAt)) {
+        Object.assign(existing, submission, { scanCount: existing.scanCount });
+      }
+    });
+
+    res.json({
+      partNo: upperPartNo,
+      vendors: Array.from(vendorMap.values())
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

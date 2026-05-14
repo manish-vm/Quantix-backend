@@ -1,9 +1,12 @@
 const bcrypt = require('bcryptjs');
 const User = require('../models/User');
 
+const normalizeEmployeeType = (employeeType) => {
+  return ['vendor', 'employee'].includes(employeeType) ? employeeType : 'employee';
+};
+
 const pickEmployeeUpdatableFields = (body) => {
   return {
-    // employeeType is not stored in DB schema; keep field out.
     employeeType: body.employeeType,
     employeeId: body.employeeId,
 
@@ -78,6 +81,7 @@ exports.createEmployee = async (req, res) => {
       email: String(email).toLowerCase().trim(),
       password: hashedPassword,
       role: 'employee',
+      employeeType: normalizeEmployeeType(employeeType),
       employeeId,
       fullName,
       department,
@@ -117,7 +121,7 @@ exports.updateEmployee = async (req, res) => {
     // Allow updating HR fields
     const updatedFields = pickEmployeeUpdatableFields(rest);
 
-    if (updatedFields.employeeType !== undefined) user.employeeType = updatedFields.employeeType;
+    if (updatedFields.employeeType !== undefined) user.employeeType = normalizeEmployeeType(updatedFields.employeeType);
 
     if (updatedFields.employeeId !== undefined) {
       const nextId = updatedFields.employeeId ? String(updatedFields.employeeId).trim() : updatedFields.employeeId;
