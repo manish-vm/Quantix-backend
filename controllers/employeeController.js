@@ -27,9 +27,16 @@ exports.getAllEmployees = async (req, res) => {
   try {
     const { employeeType } = req.query;
 
-    const filter = { role: 'employee' };
-    if (employeeType && ['vendor', 'employee'].includes(String(employeeType))) {
-      filter.employeeType = String(employeeType);
+    const filter = {};
+    if (employeeType === 'vendor') {
+      // Vendor rows might be stored with only `role: 'vendor'` or with `employeeType: 'vendor'`
+      // so treat either as vendor.
+      filter.$or = [{ role: 'vendor' }, { employeeType: 'vendor' }];
+    } else if (employeeType === 'employee') {
+      filter.role = 'employee';
+      filter.employeeType = 'employee';
+    } else {
+      filter.role = { $in: ['employee', 'vendor'] };
     }
 
     const employees = await User.find(filter).sort({ createdAt: -1 });
@@ -76,12 +83,13 @@ exports.createEmployee = async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
+    const normalizedEmployeeType = normalizeEmployeeType(employeeType);
     const user = new User({
       name: fullName || employeeId || email,
       email: String(email).toLowerCase().trim(),
       password: hashedPassword,
-      role: 'employee',
-      employeeType: normalizeEmployeeType(employeeType),
+      role: normalizedEmployeeType === 'vendor' ? 'vendor' : 'employee',
+      employeeType: normalizedEmployeeType,
       employeeId,
       fullName,
       department,
@@ -121,7 +129,11 @@ exports.updateEmployee = async (req, res) => {
     // Allow updating HR fields
     const updatedFields = pickEmployeeUpdatableFields(rest);
 
-    if (updatedFields.employeeType !== undefined) user.employeeType = normalizeEmployeeType(updatedFields.employeeType);
+    if (updatedFields.employeeType !== undefined) {
+      const normalizedType = normalizeEmployeeType(updatedFields.employeeType);
+      user.employeeType = normalizedType;
+      user.role = normalizedType === 'vendor' ? 'vendor' : 'employee';
+    }
 
     if (updatedFields.employeeId !== undefined) {
       const nextId = updatedFields.employeeId ? String(updatedFields.employeeId).trim() : updatedFields.employeeId;
@@ -188,8 +200,8 @@ exports.deleteEmployee = async (req, res) => {
     const { id } = req.params;
 
     const user = await User.findById(id);
-    if (!user || user.role !== 'employee') {
-      return res.status(404).json({ message: 'Employee not found' });
+    if (!user || !['employee', 'vendor'].includes(user.role)) {
+      return res.status(404).json({ message: 'Employee/Vendor not found' });
     }
 
     await User.deleteOne({ _id: id });
