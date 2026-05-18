@@ -4,6 +4,7 @@ const DemoData = require('../models/DemoData');
 const ScanLog = require('../models/ScanLog');
 const Product = require('../models/Product');
 const User = require('../models/User');
+const VendorSubmission = require('../models/VendorSubmission');
 
 const isVendorUser = (user) => {
   if (!user) return false;
@@ -35,83 +36,304 @@ const toVendorSubmission = (log) => {
   };
 };
 
+
 exports.performScan = async (req, res) => {
   try {
-    const { partNo, measuredWeight, referenceWeight } = req.body;
+
+    const {
+      partNo,
+      measuredWeight,
+      referenceWeight,
+      vendorSubmissionId
+    } = req.body;
+
     const upperPartNo = partNo.toUpperCase();
-    const scanningUser = await User.findById(req.user.userId)
-      .select('name employeeType email employeeId department jobTitle manager')
+
+    // FETCH USER
+    const scanningUser = await User.findById(
+      req.user.userId
+    )
+      .select(
+        'name employeeType email employeeId department jobTitle manager'
+      )
       .lean();
 
-    const product = await Product.findOne({ partNo: upperPartNo });
+    const isVendor = isVendorUser(scanningUser);
+
+    // FIND PRODUCT
+    const product = await Product.findOne({
+      partNo: upperPartNo
+    });
+
     if (!product) {
-      return res.status(404).json({ message: 'Part No not found' });
+      return res.status(404).json({
+        message: 'Part No not found'
+      });
     }
 
-    const demoData = await DemoData.findOne({ partNo: upperPartNo });
+    // FIND DEMO DATA
+    const demoData = await DemoData.findOne({
+      partNo: upperPartNo
+    });
+
     if (!demoData) {
       return res.status(404).json({
-        message: 'Demo data not found. Please create baseline data first.',
+        message:
+          'Demo data not found. Please create baseline data first.',
         requiresDemoData: true
       });
     }
 
-    // if (demoData.remainingCount <= 0) {
-    //   return res.status(400).json({ message: 'All items have been scanned. Count is zero.' });
-    // }
+    // CALCULATE EXPECTED WEIGHT
+    const expectedWeight =
+      Number.isFinite(Number(referenceWeight))
+        ? Number(referenceWeight)
+        : demoData.unitWeight * demoData.totalCount;
 
-    const expectedWeight = Number.isFinite(Number(referenceWeight))
-      ? Number(referenceWeight)
-      : demoData.unitWeight * demoData.totalCount;
-    const tolerance = demoData.toleranceWeight ?? 0;
-    const isExactVendorMatch = Number.isFinite(Number(referenceWeight))
-      ? measuredWeight === expectedWeight
-      : Math.abs(measuredWeight - expectedWeight) <= tolerance;
-    const status = isExactVendorMatch ? 'match' : 'mismatch';
-    const expectedCount = status === 'match'
-      ? Math.round(expectedWeight / demoData.unitWeight)
-      : 0;
-    const finalValidationStatus = status === 'match' ? 'accepted' : 'rejected';
+    const tolerance =
+      demoData.toleranceWeight ?? 0;
 
+    const isExactVendorMatch =
+      Number.isFinite(Number(referenceWeight))
+        ? Number(measuredWeight) === expectedWeight
+        : Math.abs(
+          Number(measuredWeight) -
+          expectedWeight
+        ) <= tolerance;
+
+    const status = isExactVendorMatch
+      ? 'match'
+      : 'mismatch';
+
+    const expectedCount =
+      status === 'match'
+        ? Math.round(
+          expectedWeight /
+          demoData.unitWeight
+        )
+        : 0;
+
+    const finalValidationStatus =
+      status === 'match'
+        ? 'accepted'
+        : 'rejected';
+
+    // UPDATE DEMO COUNT
     if (status === 'match') {
-      demoData.remainingCount = Math.max(0, demoData.remainingCount - expectedCount);
+
+      demoData.remainingCount = Math.max(
+        0,
+        demoData.remainingCount - expectedCount
+      );
+
       await demoData.save();
     }
 
+    // EMPLOYEE REVIEW VALIDATION
+    let updatedVendorSubmission = null;
+
+    if (
+      !isVendor &&
+      vendorSubmissionId &&
+      status === 'match'
+    ) {
+
+      updatedVendorSubmission =
+        await VendorSubmission.findOneAndUpdate(
+          {
+            _id: vendorSubmissionId,
+            remainingReviewCount: {
+              $gt: 0
+            }
+          },
+          {
+            $inc: {
+              reviewedCount: 1,
+              remainingReviewCount: -1
+            }
+          },
+          {
+            new: true
+          }
+        );
+
+      if (!updatedVendorSubmission) {
+
+        return res.status(400).json({
+          message:
+            'Review limit completed for this vendor submission'
+        });
+      }
+
+      // AUTO COMPLETE
+      if (
+        updatedVendorSubmission.remainingReviewCount <= 0
+      ) {
+
+        updatedVendorSubmission.status =
+          'completed';
+
+        await updatedVendorSubmission.save();
+      }
+    }
+
+    // CREATE SCAN LOG
     const scanLog = new ScanLog({
       partNo: upperPartNo,
       partDescription: product.description,
+
       measuredWeight,
+
       expectedWeight,
-      ...(Number.isFinite(Number(referenceWeight)) ? { referenceWeight: Number(referenceWeight) } : {}),
+
+      ...(Number.isFinite(
+        Number(referenceWeight)
+      )
+        ? {
+          referenceWeight:
+            Number(referenceWeight)
+        }
+        : {}),
+
       unitWeight: demoData.unitWeight,
+
       toleranceWeight: tolerance,
+
       expectedCount,
+
       status,
+
       finalValidationStatus,
+
       scannedBy: req.user.userId,
-      scannedByName: scanningUser?.name || req.user.name,
-      scannedByEmployeeType: isVendorUser(scanningUser) ? 'vendor' : 'employee'
+
+      scannedByName:
+        scanningUser?.name ||
+        req.user.name,
+
+      scannedByEmployeeType: isVendor
+        ? 'vendor'
+        : 'employee'
     });
+
     await scanLog.save();
 
+    // CREATE VENDOR SUBMISSION
+    if (isVendor && status === 'match') {
+
+      const existingSubmission =
+        await VendorSubmission.findOne({
+          partNo: upperPartNo,
+          vendorId: req.user.userId,
+          status: 'active'
+        });
+
+      if (existingSubmission) {
+
+        existingSubmission.submittedCount += 1;
+
+        existingSubmission.remainingReviewCount += 1;
+
+        existingSubmission.expectedCount =
+          (existingSubmission.expectedCount || 0) +
+          expectedCount;
+
+        existingSubmission.overallWeight =
+          expectedWeight;
+
+        existingSubmission.measuredWeight =
+          measuredWeight;
+
+        existingSubmission.expectedWeight =
+          expectedWeight;
+
+        await existingSubmission.save();
+
+      } else {
+
+        await VendorSubmission.create({
+
+          partNo: upperPartNo,
+
+          vendorId: req.user.userId,
+
+          vendorName:
+            scanningUser?.name || 'Vendor',
+
+          vendorCode:
+            scanningUser?.employeeId || '',
+
+          submittedCount: 1,
+
+          reviewedCount: 0,
+
+          remainingReviewCount: 1,
+
+          expectedCount,
+
+          overallWeight: expectedWeight,
+
+          measuredWeight,
+
+          expectedWeight,
+
+          status: 'active'
+        });
+      }
+    }
+
+    // RESPONSE
     res.json({
       status,
+
       partNo: upperPartNo,
-      partDescription: product.description,
+
+      partDescription:
+        product.description,
+
       measuredWeight,
+
       expectedWeight,
+
       unitWeight: demoData.unitWeight,
+
       toleranceWeight: tolerance,
+
       expectedCount,
-      remainingCount: demoData.remainingCount,
+
+      remainingCount:
+        demoData.remainingCount,
+
       finalValidationStatus,
-      message: status === 'match' ? 'Weight matches expected value' : 'Weight mismatch detected'
+
+      message:
+        status === 'match'
+          ? 'Weight matches expected value'
+          : 'Weight mismatch detected',
+
+      remainingReviewCount:
+        updatedVendorSubmission
+          ?.remainingReviewCount ?? null,
+
+      reviewedCount:
+        updatedVendorSubmission
+          ?.reviewedCount ?? null
     });
+
   } catch (error) {
-    res.status(500).json({ message: error.message });
+
+    console.error(
+      'performScan error:',
+      error
+    );
+
+    res.status(500).json({
+      message: error.message
+    });
   }
 };
+
+
 
 exports.getScanLogs = async (req, res) => {
   try {
@@ -174,7 +396,7 @@ exports.getScanLogs = async (req, res) => {
           toleranceWeight,
           overallWeight,
           receivedWeight,
-          
+
           short,
           excess,
           totalIdealProductCount,
@@ -273,48 +495,37 @@ exports.getScanHistory = async (req, res) => {
 
 exports.getVendorSubmissionsForPart = async (req, res) => {
   try {
+
     const { partNo } = req.query;
+
     if (!partNo) {
-      return res.status(400).json({ message: 'partNo query parameter is required' });
+      return res.status(400).json({
+        message: 'Part number is required'
+      });
     }
 
-    const upperPartNo = partNo.toUpperCase();
-    const logs = await ScanLog.find({ partNo: upperPartNo })
-      .populate('scannedBy', 'name fullName email employeeId employeeType department jobTitle manager')
+    const vendors = await VendorSubmission.find({
+      partNo: partNo.toUpperCase(),
+      remainingReviewCount: { $gt: 0 },
+      status: 'active'
+    })
       .sort({ createdAt: -1 })
       .lean();
 
-    const vendorLogs = logs.filter((log) => (
-      log.scannedByEmployeeType === 'vendor' || isVendorUser(log.scannedBy)
-    ));
-    const vendorMap = new Map();
-
-    vendorLogs.forEach((log) => {
-      const vendorKey = String(log.scannedBy?._id || log.scannedByName || log._id);
-      const existing = vendorMap.get(vendorKey);
-      const submission = toVendorSubmission(log);
-
-      if (!existing) {
-        vendorMap.set(vendorKey, {
-          ...submission,
-          scanCount: 1
-        });
-        return;
-      }
-
-      existing.scanCount += 1;
-
-      if (new Date(log.createdAt) > new Date(existing.submittedAt)) {
-        Object.assign(existing, submission, { scanCount: existing.scanCount });
-      }
-    });
-
     res.json({
-      partNo: upperPartNo,
-      vendors: Array.from(vendorMap.values())
+      vendors
     });
+
   } catch (error) {
-    res.status(500).json({ message: error.message });
+
+    console.error(
+      'Vendor submission fetch error:',
+      error
+    );
+
+    res.status(500).json({
+      message: error.message
+    });
   }
 };
 
