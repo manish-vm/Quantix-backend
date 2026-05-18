@@ -44,7 +44,8 @@ exports.performScan = async (req, res) => {
       partNo,
       measuredWeight,
       referenceWeight,
-      vendorSubmissionId
+      vendorSubmissionId,
+      vendorOverrideData
     } = req.body;
 
     const upperPartNo = partNo.toUpperCase();
@@ -84,14 +85,28 @@ exports.performScan = async (req, res) => {
       });
     }
 
-    // CALCULATE EXPECTED WEIGHT
+    const effectiveUnitWeight =
+      vendorOverrideData?.unitWeight ??
+      demoData.unitWeight;
+
+    const effectiveCount =
+      vendorOverrideData?.totalCount ??
+      demoData.totalCount;
+
+    const effectiveTolerance =
+      vendorOverrideData?.toleranceWeight ??
+      demoData.toleranceWeight;
+
+    const effectiveOverallWeight =
+      vendorOverrideData?.overallWeight ??
+      (effectiveUnitWeight * effectiveCount);
+
     const expectedWeight =
       Number.isFinite(Number(referenceWeight))
         ? Number(referenceWeight)
-        : demoData.unitWeight * demoData.totalCount;
+        : effectiveOverallWeight;
 
-    const tolerance =
-      demoData.toleranceWeight ?? 0;
+    const tolerance = effectiveTolerance ?? 0;
 
     const isExactVendorMatch =
       Number.isFinite(Number(referenceWeight))
@@ -199,7 +214,7 @@ exports.performScan = async (req, res) => {
 
       toleranceWeight: tolerance,
 
-      expectedCount,
+      expectedCount: effectiveCount,
 
       status,
 
@@ -269,7 +284,7 @@ exports.performScan = async (req, res) => {
 
           remainingReviewCount: 1,
 
-          expectedCount,
+          expectedCount: effectiveCount,
 
           overallWeight: expectedWeight,
 
@@ -277,7 +292,11 @@ exports.performScan = async (req, res) => {
 
           expectedWeight,
 
-          status: 'active'
+          status: 'active',
+
+          unitWeight: effectiveUnitWeight,
+          toleranceWeight: effectiveTolerance,
+          overallProductCount: effectiveCount,
         });
       }
     }
@@ -299,7 +318,7 @@ exports.performScan = async (req, res) => {
 
       toleranceWeight: tolerance,
 
-      expectedCount,
+      expectedCount: effectiveCount,
 
       remainingCount:
         demoData.remainingCount,
