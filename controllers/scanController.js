@@ -124,7 +124,7 @@ exports.performScan = async (req, res) => {
       status === 'match'
         ? Math.round(
           expectedWeight /
-          demoData.unitWeight
+          effectiveUnitWeight
         )
         : 0;
 
@@ -210,7 +210,7 @@ exports.performScan = async (req, res) => {
         }
         : {}),
 
-      unitWeight: demoData.unitWeight,
+      unitWeight: effectiveUnitWeight,
 
       toleranceWeight: tolerance,
 
@@ -262,6 +262,14 @@ exports.performScan = async (req, res) => {
         existingSubmission.expectedWeight =
           expectedWeight;
 
+        existingSubmission.submissionEntries.push({
+          overallWeight: expectedWeight,
+          measuredWeight,
+          expectedWeight,
+          expectedCount,
+          submittedAt: new Date()
+        });
+
         await existingSubmission.save();
 
       } else {
@@ -284,7 +292,7 @@ exports.performScan = async (req, res) => {
 
           remainingReviewCount: 1,
 
-          expectedCount: effectiveCount,
+          expectedCount,
 
           overallWeight: expectedWeight,
 
@@ -297,6 +305,16 @@ exports.performScan = async (req, res) => {
           unitWeight: effectiveUnitWeight,
           toleranceWeight: effectiveTolerance,
           overallProductCount: effectiveCount,
+
+          submissionEntries: [
+            {
+              overallWeight: expectedWeight,
+              measuredWeight,
+              expectedWeight,
+              expectedCount,
+              submittedAt: new Date()
+            }
+          ],
         });
       }
     }
@@ -314,11 +332,11 @@ exports.performScan = async (req, res) => {
 
       expectedWeight,
 
-      unitWeight: demoData.unitWeight,
+      unitWeight: effectiveUnitWeight,
 
       toleranceWeight: tolerance,
 
-      expectedCount: effectiveCount,
+      expectedCount,
 
       remainingCount:
         demoData.remainingCount,
@@ -378,10 +396,10 @@ exports.getScanLogs = async (req, res) => {
         const demo = await DemoData.findOne({ partNo: log.partNo }).lean();
         const prod = await Product.findOne({ partNo: log.partNo }).lean();
 
-        const unitWeight = demo ? demo.unitWeight : log.unitWeight ?? null;
-        const toleranceWeight = demo ? (demo.toleranceWeight ?? 0) : log.toleranceWeight ?? null;
-        const overallWeight = demo ? demo.overallWeight : null;
-        const totalIdealProductCount = demo ? demo.totalCount : null;
+        const unitWeight = log.unitWeight ?? (demo ? demo.unitWeight : null);
+        const toleranceWeight = log.toleranceWeight ?? (demo ? (demo.toleranceWeight ?? 0) : null);
+        const overallWeight = log.expectedWeight ?? (demo ? demo.overallWeight : null);
+        const totalIdealProductCount = log.expectedCount ?? (demo ? demo.totalCount : null);
 
         // Keep derived fields on a per-scan basis when possible.
         const receivedWeight = log.measuredWeight ?? null;
@@ -471,19 +489,19 @@ exports.getUserScanHistory = async (req, res) => {
       return acc;
     }, {});
 
-    // Enrich logs with latest demo data so employee history reflects admin updates.
+    // Prefer per-scan values so vendor-edited submissions keep their own weight/count.
     const enrichedLogs = logs.map((log) => {
       const demo = demoMap[log.partNo];
       return {
         ...log,
         // Used by UI column "Total ideal product count"
-        totalIdealProductCount: demo?.totalCount ?? null,
+        totalIdealProductCount: log.expectedCount ?? demo?.totalCount ?? null,
         // Used by UI column "Tolerance Weight"
-        toleranceWeight: demo?.toleranceWeight ?? log.toleranceWeight ?? null,
+        toleranceWeight: log.toleranceWeight ?? demo?.toleranceWeight ?? null,
         // Used by UI column "Overall Weight"
-        overallWeight: demo?.overallWeight ?? null,
+        overallWeight: log.expectedWeight ?? demo?.overallWeight ?? null,
         // Also keep unitWeight in sync (optional but helps consistency)
-        unitWeight: demo?.unitWeight ?? log.unitWeight ?? null,
+        unitWeight: log.unitWeight ?? demo?.unitWeight ?? null,
       };
     });
 
@@ -531,8 +549,52 @@ exports.getVendorSubmissionsForPart = async (req, res) => {
       .sort({ createdAt: -1 })
       .lean();
 
+    const vendorsWithEntries = await Promise.all(
+      vendors.map(async (vendor) => {
+        let submissionEntries = vendor.submissionEntries || [];
+
+        if (submissionEntries.length < vendor.submittedCount) {
+          const vendorLogs = await ScanLog.find({
+            partNo: vendor.partNo,
+            scannedBy: vendor.vendorId,
+            scannedByEmployeeType: 'vendor',
+            status: 'match'
+          })
+            .sort({ createdAt: -1 })
+            .limit(vendor.submittedCount)
+            .lean();
+
+          submissionEntries = vendorLogs.map((log) => ({
+            _id: log._id,
+            overallWeight: log.expectedWeight,
+            measuredWeight: log.measuredWeight,
+            expectedWeight: log.expectedWeight,
+            expectedCount: log.expectedCount,
+            submittedAt: log.createdAt
+          }));
+        }
+
+        return {
+          ...vendor,
+          submissionEntries:
+            submissionEntries.length > 0
+              ? submissionEntries
+              : [
+                {
+                  _id: vendor._id,
+                  overallWeight: vendor.overallWeight,
+                  measuredWeight: vendor.measuredWeight,
+                  expectedWeight: vendor.expectedWeight,
+                  expectedCount: vendor.expectedCount,
+                  submittedAt: vendor.createdAt
+                }
+              ]
+        };
+      })
+    );
+
     res.json({
-      vendors
+      vendors: vendorsWithEntries
     });
 
   } catch (error) {

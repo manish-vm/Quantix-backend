@@ -44,6 +44,23 @@ const vendorSubmissionSchema = new mongoose.Schema(
     overallWeight: Number,
     measuredWeight: Number,
     expectedWeight: Number,
+    expectedCount: Number,
+    unitWeight: Number,
+    toleranceWeight: Number,
+    overallProductCount: Number,
+
+    submissionEntries: [
+      {
+        overallWeight: Number,
+        measuredWeight: Number,
+        expectedWeight: Number,
+        expectedCount: Number,
+        submittedAt: {
+          type: Date,
+          default: Date.now
+        }
+      }
+    ],
 
     status: {
       type: String,
