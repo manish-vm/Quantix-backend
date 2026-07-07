@@ -1,6 +1,7 @@
 const ScanLog = require('../models/ScanLog');
 const DemoData = require('../models/DemoData');
 const Product = require('../models/Product');
+const VendorSubmission = require('../models/VendorSubmission');
 
 exports.getDashboardStats = async (req, res) => {
   try {
@@ -110,6 +111,19 @@ exports.getProductReport = async (req, res) => {
 
     for (const product of products) {
       const demo = await DemoData.findOne({ partNo: product.partNo }).lean();
+      const latestVendorSubmission = await VendorSubmission.findOne({
+        partNo: product.partNo
+      })
+        .sort({ updatedAt: -1, createdAt: -1 })
+        .lean();
+
+      const latestEmployeeSubmission = await ScanLog.findOne({
+        partNo: product.partNo,
+        scannedByEmployeeType: 'employee',
+        referenceWeight: { $exists: true }
+      })
+        .sort({ createdAt: -1 })
+        .lean();
 
       // Aggregate scan data for this product
       const scanAggregation = await ScanLog.aggregate([
@@ -131,6 +145,15 @@ exports.getProductReport = async (req, res) => {
       const totalCount = demo ? demo.totalCount : null;
       const receivedWeight = scanData.receivedWeight;
       const totalScans = scanData.totalScans;
+      const vendorWeight =
+        latestVendorSubmission?.measuredWeight ??
+        latestVendorSubmission?.overallWeight ??
+        null;
+
+      const employeeWeight = latestEmployeeSubmission?.measuredWeight ?? null;
+      const hasEmployeeReview = employeeWeight !== null && vendorWeight !== null;
+      const employeeMatchesVendor =
+        hasEmployeeReview && Number(employeeWeight) === Number(vendorWeight);
 
       // Calculate derived fields
       let short = null;
@@ -169,7 +192,21 @@ exports.getProductReport = async (req, res) => {
         productDelay: productDelay,
         excessProduct: excessProduct,
         remainingCount: demo ? demo.remainingCount : null,
-        totalScans: totalScans
+        totalScans: totalScans,
+        vendorReview: latestVendorSubmission
+          ? {
+            status: 'submitted',
+            name: latestVendorSubmission.vendorName,
+            weight: vendorWeight
+          }
+          : null,
+        employeeReview: latestEmployeeSubmission
+          ? {
+            status: employeeMatchesVendor ? 'match' : 'mismatch',
+            name: latestEmployeeSubmission.scannedByName,
+            weight: employeeWeight
+          }
+          : null
       });
     }
 

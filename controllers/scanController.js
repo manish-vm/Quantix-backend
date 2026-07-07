@@ -228,7 +228,14 @@ exports.performScan = async (req, res) => {
 
       scannedByEmployeeType: isVendor
         ? 'vendor'
-        : 'employee'
+        : 'employee',
+
+      ...(!isVendor && updatedVendorSubmission
+        ? {
+          referenceVendor: updatedVendorSubmission.vendorId,
+          referenceVendorName: updatedVendorSubmission.vendorName
+        }
+        : {})
     });
 
     await scanLog.save();
