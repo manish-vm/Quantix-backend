@@ -410,7 +410,10 @@ exports.getScanLogs = async (req, res) => {
 
         // Keep derived fields on a per-scan basis when possible.
         const receivedWeight = log.measuredWeight ?? null;
-        const basedOnReceivedWeightProductCount = log.expectedCount ?? null;
+        const basedOnReceivedWeightProductCount =
+          unitWeight !== null && unitWeight > 0 && receivedWeight !== null
+            ? Math.round(receivedWeight / unitWeight)
+            : null;
 
         let short = null;
         let excess = null;
