@@ -163,7 +163,10 @@ exports.getProductReport = async (req, res) => {
       let excessProduct = null;
 
       if (unitWeight !== null && overallWeight !== null && totalCount !== null) {
-        basedOnReceivedWeightProductCount = scanData.validatedProductCount;
+        basedOnReceivedWeightProductCount =
+          unitWeight > 0
+            ? Math.round(receivedWeight / unitWeight)
+            : scanData.validatedProductCount;
 
         if (receivedWeight < overallWeight) {
           short = overallWeight - receivedWeight;
